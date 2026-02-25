@@ -1,0 +1,46 @@
+{
+  "name": "claude-statusline",
+  "displayName": "Claude Statusline",
+  "publisher": "VenkataParameswaran",
+  "description": "Displays Claude Code session info in the VS Code status bar — model, context usage, session/daily/weekly/monthly costs, and burn rate",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["*"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Claude Statusline",
+      "properties": {
+        "claudeStatusline.refreshIntervalMs": {
+          "type": "number",
+          "default": 5000,
+          "description": "How often to refresh the status bar (milliseconds)"
+        },
+        "claudeStatusline.alignment": {
+          "type": "string",
+          "enum": ["left", "right"],
+          "default": "left",
+          "description": "Status bar alignment"
+        },
+        "claudeStatusline.priority": {
+          "type": "number",
+          "default": 100,
+          "description": "Status bar item priority (higher = further left)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  }
+}
