@@ -5,18 +5,27 @@ import * as os from "os";
 import * as readline from "readline";
 import { exec } from "child_process";
 
-// Context window sizes by model prefix
-const CONTEXT_WINDOWS: Record<string, number> = {
-  "claude-opus-4-6": 200000,
-  "claude-opus-4-5": 200000,
-  "claude-opus-4-1": 200000,
-  "claude-opus-4-0": 200000,
-  "claude-sonnet-4-6": 200000,
-  "claude-sonnet-4-5": 200000,
-  "claude-sonnet-4": 200000,
-  "claude-haiku-4-5": 200000,
-  "claude-haiku-3-5": 200000,
-};
+/**
+ * Parse a model ID to extract the base model name and context window size.
+ * Context window is derived from an optional suffix like [1m], [200k], etc.
+ * The base model (suffix stripped) is used for pricing and display name lookups.
+ *
+ * Examples:
+ *   "claude-opus-4-6"       → base: "claude-opus-4-6",   context: 200_000
+ *   "claude-opus-4-6[1m]"   → base: "claude-opus-4-6",   context: 1_000_000
+ *   "claude-sonnet-4[500k]" → base: "claude-sonnet-4",    context: 500_000
+ */
+function parseModelId(model: string): { baseModel: string; contextWindow: number } {
+  const match = model.match(/^(.+?)\[(\d+)(k|m)\]$/i);
+  if (!match) {
+    return { baseModel: model, contextWindow: 200_000 };
+  }
+  const baseModel = match[1];
+  const num = parseInt(match[2], 10);
+  const unit = match[3].toLowerCase();
+  const contextWindow = unit === "m" ? num * 1_000_000 : num * 1_000;
+  return { baseModel, contextWindow };
+}
 
 // Pricing per million tokens (USD) — Anthropic / Vertex AI global pricing
 interface ModelPricing {
@@ -303,7 +312,12 @@ function buildTooltip(
   const lines = ["Claude Statusline"];
   lines.push("");
   lines.push(`Project: ${projectName}`);
+  const { contextWindow } = parseModelId(session.model);
+  const ctxLabel = contextWindow >= 1_000_000
+    ? `${contextWindow / 1_000_000}M`
+    : `${Math.round(contextWindow / 1_000)}K`;
   lines.push(`Model: ${session.model}`);
+  lines.push(`Context window: ${ctxLabel} tokens`);
 
   const totalInput =
     session.total.input +
@@ -335,16 +349,26 @@ function buildTooltip(
 // ── Model / pricing helpers ─────────────────────────────────────
 
 function formatModelName(model: string): string {
-  if (model.includes("opus-4-6")) return "Opus 4.6";
-  if (model.includes("opus-4-5")) return "Opus 4.5";
-  if (model.includes("opus-4-1")) return "Opus 4.1";
-  if (model.includes("opus-4-0") || model.includes("opus-4-2")) return "Opus 4";
-  if (model.includes("sonnet-4-6")) return "Sonnet 4.6";
-  if (model.includes("sonnet-4-5")) return "Sonnet 4.5";
-  if (model.includes("sonnet-4")) return "Sonnet 4";
-  if (model.includes("haiku-4-5")) return "Haiku 4.5";
-  if (model.includes("haiku-3-5")) return "Haiku 3.5";
-  return model;
+  const { baseModel, contextWindow } = parseModelId(model);
+
+  // Extract family and version (ignoring date suffixes like -20250101)
+  const familyMatch = baseModel.match(/claude-(opus|sonnet|haiku)-(\d+(?:-\d+)?)/);
+  if (!familyMatch) return model;
+
+  const family = familyMatch[1].charAt(0).toUpperCase() + familyMatch[1].slice(1);
+  const version = familyMatch[2].replace(/-/g, ".").replace(/\.0$/, "");
+
+  let name = `${family} ${version}`;
+
+  // Append context size for non-default context windows
+  if (contextWindow !== 200_000) {
+    const label = contextWindow >= 1_000_000
+      ? `${contextWindow / 1_000_000}M`
+      : `${Math.round(contextWindow / 1_000)}K`;
+    name += ` ${label}`;
+  }
+
+  return name;
 }
 
 function getContextPercent(session: SessionState): number {
@@ -353,20 +377,14 @@ function getContextPercent(session: SessionState): number {
     session.lastCacheCreationForContext +
     session.lastCacheReadForContext;
 
-  let contextWindow = 200000;
-  for (const [prefix, size] of Object.entries(CONTEXT_WINDOWS)) {
-    if (session.model.startsWith(prefix)) {
-      contextWindow = size;
-      break;
-    }
-  }
-
+  const { contextWindow } = parseModelId(session.model);
   return Math.min(100, Math.floor((currentTokens * 100) / contextWindow));
 }
 
 function getPricing(model: string): ModelPricing {
+  const { baseModel } = parseModelId(model);
   for (const [prefix, p] of Object.entries(PRICING)) {
-    if (model.startsWith(prefix)) {
+    if (baseModel.startsWith(prefix)) {
       return p;
     }
   }
