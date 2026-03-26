@@ -29,6 +29,11 @@
           "type": "number",
           "default": 100,
           "description": "Status bar item priority (higher = further left)"
+        },
+        "claudeStatusline.contextWindowTokens": {
+          "type": "number",
+          "default": 200000,
+          "description": "Context window size in tokens. Set to 1000000 for 1M context models (e.g. claude-opus-4-6[1m]). The JSONL session data does not include the [1m] suffix, so this must be configured manually."
         }
       }
     }

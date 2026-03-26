@@ -27,6 +27,21 @@ function parseModelId(model: string): { baseModel: string; contextWindow: number
   return { baseModel, contextWindow };
 }
 
+/**
+ * Resolve the effective context window size.
+ * Priority: VS Code setting > model ID suffix > default 200k.
+ */
+function getEffectiveContextWindow(model: string): number {
+  const config = vscode.workspace.getConfiguration("claudeStatusline");
+  const override = config.get<number>("contextWindowTokens", 200_000);
+  // If user explicitly changed the setting from default, use it
+  if (override !== 200_000) {
+    return override;
+  }
+  // Otherwise try parsing from model ID suffix (e.g. [1m])
+  return parseModelId(model).contextWindow;
+}
+
 // Pricing per million tokens (USD) — Anthropic / Vertex AI global pricing
 interface ModelPricing {
   input: number;
@@ -312,7 +327,7 @@ function buildTooltip(
   const lines = ["Claude Statusline"];
   lines.push("");
   lines.push(`Project: ${projectName}`);
-  const { contextWindow } = parseModelId(session.model);
+  const contextWindow = getEffectiveContextWindow(session.model);
   const ctxLabel = contextWindow >= 1_000_000
     ? `${contextWindow / 1_000_000}M`
     : `${Math.round(contextWindow / 1_000)}K`;
@@ -349,7 +364,8 @@ function buildTooltip(
 // ── Model / pricing helpers ─────────────────────────────────────
 
 function formatModelName(model: string): string {
-  const { baseModel, contextWindow } = parseModelId(model);
+  const { baseModel } = parseModelId(model);
+  const contextWindow = getEffectiveContextWindow(model);
 
   // Extract family and version (ignoring date suffixes like -20250101)
   const familyMatch = baseModel.match(/claude-(opus|sonnet|haiku)-(\d+(?:-\d+)?)/);
@@ -377,7 +393,7 @@ function getContextPercent(session: SessionState): number {
     session.lastCacheCreationForContext +
     session.lastCacheReadForContext;
 
-  const { contextWindow } = parseModelId(session.model);
+  const contextWindow = getEffectiveContextWindow(session.model);
   return Math.min(100, Math.floor((currentTokens * 100) / contextWindow));
 }
 
