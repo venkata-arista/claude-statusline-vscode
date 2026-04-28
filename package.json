@@ -33,7 +33,23 @@
         "claudeStatusline.contextWindowTokens": {
           "type": "number",
           "default": 200000,
-          "description": "Context window size in tokens. Set to 1000000 for 1M context models (e.g. claude-opus-4-6[1m]). The JSONL session data does not include the [1m] suffix, so this must be configured manually."
+          "description": "Context window size override in tokens. Auto-detected from JSONL session data when possible (e.g. 1M for opus-4-6[1m])."
+        },
+        "claudeStatusline.cluster": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "AI proxy cluster name. Falls back to `AI_PROXY_CLUSTER` env var, then `infra`."
+        },
+        "claudeStatusline.apiKeyPath": {
+          "type": "string",
+          "default": "~/.ai-proxy-api-key",
+          "markdownDescription": "Path to bearer-token file for AI proxy. Falls back to `AI_PROXY_API_KEY` then `API_KEY` env vars."
+        },
+        "claudeStatusline.proxyPollIntervalSeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 30,
+          "description": "How often to poll the AI proxy for spend data (seconds)."
         }
       }
     }
