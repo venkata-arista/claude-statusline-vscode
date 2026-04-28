@@ -1,50 +1,66 @@
 # Claude Statusline (VS Code)
 
-Displays Claude Code session info in the VS Code status bar — model, context usage, and cost — by parsing session JSONL files from `~/.claude/projects/` and aggregating costs via [ccusage](https://github.com/ryoppippi/ccusage).
+Displays Claude Code session info in the VS Code status bar — model, context usage, cost, and AI proxy budget — by parsing session JSONL files from `~/.claude/projects/` and polling the Arista AI proxy for spend tracking.
 
 ## What it shows
 
 ```
-Opus 4.6 | my-project ██████░░░░ 62% | $3.47 sess / $12 today / $45 wk / $187 mo | $6.50/last hr
+Opus 4.6 1M | my-project ██████░░░░ 62% | 💰 $3.47 sess / $8.20 today / $45 wk / $38/$50 ████████░░ | 🔥 $6.50/last hr
 ```
 
-- **Model** — active Claude model (Opus 4.6, Sonnet 4, Haiku 4.5, etc.)
-- **Project** — workspace folder name with a visual progress bar
-- **Context %** — context window usage based on the last message's token counts
-- **Session cost** — estimated cost for the current session (always 2 decimal places)
-- **Today / Week / Month** — aggregate costs across all sessions and projects, powered by ccusage
+- **Model** — active Claude model with context window size (e.g. Opus 4.6 1M)
+- **Project** — workspace folder name with a visual context usage bar
+- **Context %** — context window usage (auto-detected from JSONL, including 1M models)
+- **Session cost** — estimated cost for the current session
+- **Today / Week** — daily and weekly spend deltas derived from the AI proxy
+- **Budget** — proxy spend vs. max budget with progress bar (e.g. `$38/$50 ████████░░`)
 - **Burn rate** — rolling 60-minute spend across all active sessions
 
-Hover over the status bar item for a detailed tooltip with token breakdowns.
+The status bar changes color based on budget utilization:
+- **Green** — under 30%
+- **Yellow** — 30–60%
+- **Orange warning** — 60–90%
+- **Red error** — 90%+
+
+Hover over the status bar item for a detailed tooltip with token breakdowns and proxy budget details.
 
 ### Examples
 
 ```
-Sonnet 4   | web-app    ████░░░░░░ 38% | $0.82 sess / $3.20 today / $18 wk / $52 mo | $2.10/last hr
-Opus 4.6   | api-server █████████░ 91% | $8.15 sess / $24 today / $89 wk / $310 mo  | $11.30/last hr
-Haiku 4.5  | cli-tool   ██░░░░░░░░ 15% | $0.12 sess / $0.45 today / $1.80 wk / $6 mo
+Sonnet 4   | web-app    ████░░░░░░ 38% | 💰 $0.82 sess / $3.20 today / $18 wk / $22/$50 ████░░░░░░    | 🔥 $2.10/last hr
+Opus 4.6 1M| api-server █████████░ 91% | 💰 $8.15 sess / $24 today / $89 wk / $89/$100 █████████░
+Haiku 4.5  | cli-tool   ██░░░░░░░░ 15% | 💰 $0.12 sess / $0.45 today / $1.80 wk / $2/$50 ░░░░░░░░░░
 ```
 
 ## How it works
 
-Claude Code writes conversation data to `~/.claude/projects/<project-slug>/<session-id>.jsonl`. This extension uses a hybrid approach:
+### JSONL parsing (real-time, every 5s + on file change)
 
-**JSONL parsing (real-time, on file change):**
 1. Finds the most recently modified session JSONL for the current workspace
 2. Incrementally reads new entries (no full re-parse on each tick)
 3. Extracts model name and token usage from `assistant` messages
-4. Calculates session cost using Anthropic pricing (with 5m/1h cache write breakdown)
-5. Tracks per-request costs for a rolling 60-minute burn rate window
-6. Watches the directory for changes to update in near-realtime
+4. Auto-detects context window size from system prompt (e.g. `claude-opus-4-6[1m]` → 1M tokens)
+5. Calculates session cost using Anthropic pricing (with 5m/1h cache write breakdown)
+6. Tracks per-request costs for a rolling 60-minute burn rate window
 
-**ccusage (background, every 10 seconds):**
-1. Runs `ccusage daily --json --offline` to get daily cost breakdowns
-2. Sums entries for today, this week (Monday start), and this month
-3. Covers all sessions and projects automatically
+### AI proxy spend (background, every 60s)
 
-## Auto-install
+1. Fetches `GET /key/info` from `ai-proxy.{cluster}.corp.arista.io` with bearer auth
+2. Returns current `spend`, `max_budget`, and `budget_reset_at`
+3. Caches responses at `~/.claude/statusline-spend-cache.json` (60s TTL, shared with Python statusline)
+4. Tracks daily/weekly cost deltas via spend checkpoints at `~/.claude/statusline-spend-checkpoints.json`
+5. Handles budget resets and day/week rollovers automatically
 
-On activation, the extension checks if `ccusage` is installed. If not, it automatically installs it via `npm install -g ccusage`.
+## Setup
+
+### API key
+
+The extension needs an API key for the AI proxy. Place it in one of:
+
+1. **File** (default): `~/.ai-proxy-api-key` — a single-line file containing the bearer token
+2. **Env var**: `AI_PROXY_API_KEY` or `API_KEY`
+
+If no key is found, the extension degrades gracefully — session cost and burn rate still work, but budget/daily/weekly sections are hidden.
 
 ## Install
 
@@ -74,8 +90,10 @@ ssh user@remote-host "code --install-extension ~/claude-statusline-0.0.1.vsix --
 | `claudeStatusline.refreshIntervalMs` | `5000` | Refresh interval for JSONL parsing (ms) |
 | `claudeStatusline.alignment` | `"left"` | Status bar alignment (`"left"` or `"right"`) |
 | `claudeStatusline.priority` | `100` | Priority (higher = further left) |
-
-ccusage refreshes on a fixed 10-second interval regardless of the JSONL refresh setting.
+| `claudeStatusline.contextWindowTokens` | `200000` | Context window override (auto-detected when possible) |
+| `claudeStatusline.cluster` | `""` | AI proxy cluster name (falls back to `AI_PROXY_CLUSTER` env, then `infra`) |
+| `claudeStatusline.apiKeyPath` | `~/.ai-proxy-api-key` | Path to bearer-token file (falls back to env vars) |
+| `claudeStatusline.proxyPollIntervalSeconds` | `60` | How often to poll the AI proxy (seconds, min 30) |
 
 ## Development
 
