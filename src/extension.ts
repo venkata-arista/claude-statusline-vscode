@@ -504,7 +504,7 @@ function updateStatusBar() {
           (proxyState.info.spend / proxyState.info.max_budget) * 100;
         const budgetBar = buildProgressBar(budgetPct);
         costSection +=
-          ` / $${fmtCost(proxyState.info.spend)}` +
+          ` / $${proxyState.info.spend.toFixed(2)}` +
           `/$${Math.round(proxyState.info.max_budget)} ${budgetBar}`;
       }
       parts.push(costSection);
