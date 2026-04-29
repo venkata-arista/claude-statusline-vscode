@@ -98,13 +98,11 @@ interface ProxyState {
   info: KeyInfo;
   fetchedAt: number;
   cluster: string;
-  todayCost: number;
   weekCost: number;
 }
 
-interface SpendCheckpoints {
-  dayStart: { date: string; spend: number };
-  weekStart: { date: string; spend: number };
+interface SpendHistory {
+  daily: Record<string, number>;
 }
 
 // ── Module state ───────────────────────────────────────────────
@@ -125,8 +123,8 @@ let proxyFailNotified = false;
 const SPEND_CACHE_PATH = path.join(
   os.homedir(), ".claude", "statusline-spend-cache.json"
 );
-const CHECKPOINT_PATH = path.join(
-  os.homedir(), ".claude", "statusline-spend-checkpoints.json"
+const HISTORY_PATH = path.join(
+  os.homedir(), ".claude", "statusline-spend-history.json"
 );
 const CACHE_TTL_MS = 60_000;
 const CACHE_JITTER_MS = 10_000;
@@ -257,27 +255,29 @@ function isCacheFresh(mtimeMs: number): boolean {
   return Date.now() - mtimeMs < ttl;
 }
 
-// ── Spend checkpoints (daily/weekly tracking) ──────────────────
+// ── Spend history (weekly tracking) ────────────────────────────
 
-function readCheckpoints(): SpendCheckpoints | null {
+function readHistory(): SpendHistory {
   try {
-    const raw = fs.readFileSync(CHECKPOINT_PATH, "utf8");
-    return JSON.parse(raw);
+    const raw = fs.readFileSync(HISTORY_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.daily === "object") return parsed;
   } catch {
-    return null;
+    /* ignore */
   }
+  return { daily: {} };
 }
 
-function writeCheckpoints(cp: SpendCheckpoints): void {
-  const dir = path.dirname(CHECKPOINT_PATH);
+function writeHistoryAtomic(history: SpendHistory): void {
+  const dir = path.dirname(HISTORY_PATH);
   fs.mkdirSync(dir, { recursive: true });
   const tmp = path.join(
     dir,
-    `.statusline-spend-checkpoints.${process.pid}.${Date.now()}.tmp`
+    `.statusline-spend-history.${process.pid}.${Date.now()}.tmp`
   );
   try {
-    fs.writeFileSync(tmp, JSON.stringify(cp));
-    fs.renameSync(tmp, CHECKPOINT_PATH);
+    fs.writeFileSync(tmp, JSON.stringify(history));
+    fs.renameSync(tmp, HISTORY_PATH);
   } catch {
     try {
       fs.unlinkSync(tmp);
@@ -287,65 +287,40 @@ function writeCheckpoints(cp: SpendCheckpoints): void {
   }
 }
 
-function getWeekStartDateStr(): string {
+function updateSpendHistory(todaySpend: number): number {
+  const todayStr = getTodayDateStr();
+  const history = readHistory();
+
+  // Record today's spend (proxy spend IS today's value)
+  history.daily[todayStr] = todaySpend;
+
+  // Compute week cost: sum daily values from Monday to today
   const now = new Date();
   const day = now.getDay();
   const mondayOffset = day === 0 ? 6 : day - 1;
   const monday = new Date(now);
   monday.setDate(now.getDate() - mondayOffset);
-  const y = monday.getFullYear();
-  const m = String(monday.getMonth() + 1).padStart(2, "0");
-  const d = String(monday.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
+  monday.setHours(0, 0, 0, 0);
 
-function updateCheckpoints(
-  currentSpend: number
-): { todayCost: number; weekCost: number } {
-  const todayStr = getTodayDateStr();
-  const weekStartStr = getWeekStartDateStr();
-
-  let cp = readCheckpoints();
-
-  if (!cp) {
-    cp = {
-      dayStart: { date: todayStr, spend: currentSpend },
-      weekStart: { date: weekStartStr, spend: currentSpend },
-    };
-    writeCheckpoints(cp);
-    return { todayCost: 0, weekCost: 0 };
+  let weekCost = 0;
+  for (const [dateStr, amount] of Object.entries(history.daily)) {
+    const d = new Date(dateStr + "T00:00:00");
+    if (d.getTime() >= monday.getTime()) {
+      weekCost += amount;
+    }
   }
 
-  let changed = false;
-
-  // Handle budget reset: current spend dropped below checkpoint
-  if (currentSpend < cp.dayStart.spend) {
-    cp.dayStart = { date: todayStr, spend: 0 };
-    changed = true;
-  }
-  if (currentSpend < cp.weekStart.spend) {
-    cp.weekStart = { date: weekStartStr, spend: 0 };
-    changed = true;
+  // Prune entries older than 7 days
+  const cutoff = new Date(now);
+  cutoff.setDate(cutoff.getDate() - 7);
+  for (const dateStr of Object.keys(history.daily)) {
+    if (new Date(dateStr + "T00:00:00").getTime() < cutoff.getTime()) {
+      delete history.daily[dateStr];
+    }
   }
 
-  // Day rollover
-  if (cp.dayStart.date !== todayStr) {
-    cp.dayStart = { date: todayStr, spend: currentSpend };
-    changed = true;
-  }
-
-  // Week rollover (Monday boundary)
-  if (cp.weekStart.date !== weekStartStr) {
-    cp.weekStart = { date: weekStartStr, spend: currentSpend };
-    changed = true;
-  }
-
-  if (changed) writeCheckpoints(cp);
-
-  return {
-    todayCost: Math.max(0, currentSpend - cp.dayStart.spend),
-    weekCost: Math.max(0, currentSpend - cp.weekStart.spend),
-  };
+  writeHistoryAtomic(history);
+  return weekCost;
 }
 
 // ── Proxy fetch ────────────────────────────────────────────────
@@ -412,12 +387,11 @@ function refreshProxy(): void {
 
   const cached = readSpendCache();
   if (cached && isCacheFresh(cached.mtimeMs)) {
-    const { todayCost, weekCost } = updateCheckpoints(cached.info.spend);
+    const weekCost = updateSpendHistory(cached.info.spend);
     proxyState = {
       info: cached.info,
       fetchedAt: cached.mtimeMs,
       cluster,
-      todayCost,
       weekCost,
     };
     updateStatusBar();
@@ -428,12 +402,11 @@ function refreshProxy(): void {
   fetchKeyInfo(cluster, key)
     .then((info) => {
       writeSpendCacheAtomic(info);
-      const { todayCost, weekCost } = updateCheckpoints(info.spend);
+      const weekCost = updateSpendHistory(info.spend);
       proxyState = {
         info,
         fetchedAt: Date.now(),
         cluster,
-        todayCost,
         weekCost,
       };
       proxyFailNotified = false;
@@ -448,14 +421,11 @@ function refreshProxy(): void {
         );
       }
       if (cached) {
-        const { todayCost, weekCost } = updateCheckpoints(
-          cached.info.spend
-        );
+        const weekCost = updateSpendHistory(cached.info.spend);
         proxyState = {
           info: cached.info,
           fetchedAt: cached.mtimeMs,
           cluster,
-          todayCost,
           weekCost,
         };
       }
@@ -498,7 +468,7 @@ function updateStatusBar() {
 
       let costSection = `\u{1F4B0} $${sessionCost.toFixed(2)} sess`;
       if (proxyState && proxyState.info.max_budget > 0) {
-        costSection += ` / $${fmtCost(proxyState.todayCost)} today`;
+        costSection += ` / $${proxyState.info.spend.toFixed(2)} today`;
         costSection += ` / $${fmtCost(proxyState.weekCost)} wk`;
         const budgetPct =
           (proxyState.info.spend / proxyState.info.max_budget) * 100;
@@ -626,7 +596,7 @@ function buildTooltip(
       const resetStr = formatReset(proxyState.info.budget_reset_at);
       if (resetStr) lines.push(`Resets: ${resetStr}`);
     }
-    lines.push(`Today: $${proxyState.todayCost.toFixed(2)}`);
+    lines.push(`Today: $${proxyState.info.spend.toFixed(2)}`);
     lines.push(`This week: $${proxyState.weekCost.toFixed(2)}`);
     lines.push(`Last fetch: ${formatRelative(proxyState.fetchedAt)}`);
   }
@@ -892,21 +862,15 @@ async function parseSessionFile(
         state.sessionStartMs = new Date(obj.timestamp).getTime();
       }
 
-      // Detect context window from system prompt in user messages
-      if (obj.type === "user" && !state.detectedContextWindow) {
-        const content = obj.message?.content;
-        if (content) {
-          const text =
-            typeof content === "string"
-              ? content
-              : JSON.stringify(content);
-          const ctxMatch = text.match(CONTEXT_WINDOW_REGEX);
-          if (ctxMatch) {
-            const num = parseInt(ctxMatch[1], 10);
-            const unit = ctxMatch[2].toLowerCase();
-            state.detectedContextWindow =
-              unit === "m" ? num * 1_000_000 : num * 1_000;
-          }
+      // Detect context window from raw line (catches [1m] in any
+      // position — system prompts, tool results, assistant text)
+      if (!state.detectedContextWindow) {
+        const ctxMatch = line.match(CONTEXT_WINDOW_REGEX);
+        if (ctxMatch) {
+          const num = parseInt(ctxMatch[1], 10);
+          const unit = ctxMatch[2].toLowerCase();
+          state.detectedContextWindow =
+            unit === "m" ? num * 1_000_000 : num * 1_000;
         }
       }
 
