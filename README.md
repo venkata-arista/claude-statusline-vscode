@@ -64,23 +64,37 @@ If no key is found, the extension degrades gracefully — session cost and burn 
 
 ## Install
 
+### From a release (.vsix)
+
+Download the latest `.vsix` from [Releases](https://github.com/venkata-arista/claude-statusline-vscode/releases).
+
+**Via VS Code UI:**
+1. Open VS Code
+2. Open the Extensions view (`Ctrl+Shift+X`)
+3. Click the `...` menu (top-right of the Extensions panel)
+4. Select **Install from VSIX...**
+5. Browse to the downloaded `.vsix` file and select it
+6. Reload the window when prompted
+
+**Via command line:**
+```bash
+code --install-extension claude-statusline-0.0.2.vsix
+```
+
+**On a remote SSH instance:**
+```bash
+scp claude-statusline-0.0.2.vsix user@remote-host:~/
+ssh user@remote-host "code --install-extension ~/claude-statusline-0.0.2.vsix --force"
+```
+
+### From source
+
 ```bash
 cd ~/claude-statusline-vscode
 npm install
 npm run compile
-
-# Package as .vsix
 npx @vscode/vsce package --allow-missing-repository
-
-# Install in VS Code
-code --install-extension claude-statusline-0.0.1.vsix
-```
-
-To install on a remote SSH instance:
-
-```bash
-scp claude-statusline-0.0.1.vsix user@remote-host:~/
-ssh user@remote-host "code --install-extension ~/claude-statusline-0.0.1.vsix --force"
+code --install-extension claude-statusline-0.0.2.vsix
 ```
 
 ## Settings
