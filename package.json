@@ -3,7 +3,7 @@
   "displayName": "Claude Statusline",
   "publisher": "VenkataParameswaran",
   "description": "Displays Claude Code session info in the VS Code status bar — model, context usage, session/daily/weekly/monthly costs, and burn rate",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "engines": {
     "vscode": "^1.85.0"
   },

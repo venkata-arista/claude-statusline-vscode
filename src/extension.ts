@@ -19,6 +19,45 @@ function parseModelId(model: string): { baseModel: string; contextWindow: number
   return { baseModel, contextWindow };
 }
 
+function extractModelFamily(model: string): string | null {
+  const m = model.match(/(opus|sonnet|haiku)/i);
+  return m ? m[1].toLowerCase() : null;
+}
+
+function readClaudeSettingsContextWindow(
+  sessionModel: string
+): number | null {
+  const sessionFamily = extractModelFamily(sessionModel);
+  if (!sessionFamily) return null;
+
+  const settingsFiles = [
+    path.join(os.homedir(), ".claude", "settings.local.json"),
+    path.join(os.homedir(), ".claude", "settings.json"),
+  ];
+  const wsRoot = getWorkspaceRoot();
+  if (wsRoot) {
+    settingsFiles.unshift(
+      path.join(wsRoot, ".claude", "settings.local.json"),
+      path.join(wsRoot, ".claude", "settings.json")
+    );
+  }
+  for (const fp of settingsFiles) {
+    try {
+      const raw = fs.readFileSync(fp, "utf8");
+      const parsed = JSON.parse(raw);
+      const settingsModel = parsed?.model;
+      if (typeof settingsModel !== "string") continue;
+      const { contextWindow } = parseModelId(settingsModel);
+      if (contextWindow === 200_000) continue;
+      const settingsFamily = extractModelFamily(settingsModel);
+      if (settingsFamily === sessionFamily) return contextWindow;
+    } catch {
+      /* file not found or invalid */
+    }
+  }
+  return null;
+}
+
 function getEffectiveContextWindow(
   model: string,
   detectedContextWindow: number | null
@@ -28,6 +67,10 @@ function getEffectiveContextWindow(
   if (override !== 200_000) {
     return override;
   }
+  // Read from Claude Code settings (authoritative, updates mid-session)
+  const fromSettings = readClaudeSettingsContextWindow(model);
+  if (fromSettings) return fromSettings;
+  // Fall back to JSONL raw line detection
   if (detectedContextWindow) {
     return detectedContextWindow;
   }
